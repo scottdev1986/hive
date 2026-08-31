@@ -401,6 +401,9 @@ describe("Preference learning", () => {
       grokExecutable: "grok",
       kimiExecutable: "kimi",
       opencodeExecutable: "opencode",
+      writeTerminalLaunchSpec: async () => {
+        throw new Error("terminal creation stopped after prompt assembly");
+      },
       sessiond: {
         prepareAgentCreation: async () => admission,
         admit: async () => null,
@@ -457,6 +460,14 @@ describe("Preference learning", () => {
       expect(profileSection).toContain("CLOSED_LOOP_MARKER");
       expect(profileSection).toContain("Use bun for testing");
     } finally {
+      // The failed background launch releases the agent name in its own finally; closing the database under it turns a stopped launch into a closed-database error.
+      for (let attempt = 0; attempt < 200; attempt += 1) {
+        if (
+          db.listAgents().every((agent) => !db.isAgentNameReserved(agent.name))
+        )
+          break;
+        await Bun.sleep(5);
+      }
       db.close();
       episodic.close();
     }

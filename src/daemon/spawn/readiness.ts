@@ -186,6 +186,107 @@ export async function watchForProofOfLife<Target = string>(
   }
 }
 
+/** A Ghostty pane gets more slack than a sessiond session before silence ends the observation window: the Workspace app may still be opening, and its feed only offers new panes to Ghostty every few seconds. */
+export const PANE_QUIET_LIMIT = 30;
+
+export interface PaneProofOfLifeDeps {
+  /** The newest status event this agent has produced, re-read live — same contract as ProofOfLifeDeps.newestEventSeq. */
+  readonly newestEventSeq: () => string | null;
+  /** Did the pane's authenticated runtime report land on this launch's provider run — an adapter child bound or a protocol receipt recorded? Measured on the daemon's receiving side, never inferred. */
+  readonly runtimeEvidence: () => boolean;
+  /** A codex agent's rollout mtime; see ProofOfLifeDeps.codexActivity. */
+  readonly codexActivity: () => Promise<string | null>;
+  /** Is a process carrying this launch's run id in the process table? The pane's frontend argv names the provider run, and that id exists nowhere else, so a whole-table scan is exact. True/false when `ps` answered; null when it could not — unknown, and unknown never counts as life. */
+  readonly paneProcessAlive: () => Promise<boolean | null>;
+  readonly launchedCommand: string;
+  readonly wait: (ms: number) => Promise<void>;
+  readonly settled?: () => boolean;
+  readonly pollMs?: number;
+  readonly quietLimit?: number;
+}
+
+/**
+ * Proof of life for a launch whose PTY Ghostty owns. The daemon wrote a launch
+ * spec and nothing more: no sessiond session exists to inspect and no pane can
+ * be captured, so the watch reads only what this machine can measure — the
+ * agent's own status events, the pane's authenticated runtime report, vendor
+ * tool activity, and the frontend process itself. Like the sessiond watch
+ * there is no wall clock: silence ends the observation window, and the last
+ * conclusive process check then separates a quiet frontend at a prompt from a
+ * spec no pane ever execed — the state a spawn without an open Workspace is
+ * permanently in, which used to be recorded as a working agent.
+ */
+export async function watchForPaneProofOfLife(
+  baselineEventSeq: string | null,
+  deps: PaneProofOfLifeDeps,
+): Promise<ProofOfLife> {
+  const pollMs = deps.pollMs ?? POLL_MS;
+  const quietLimit = deps.quietLimit ?? PANE_QUIET_LIMIT;
+  const startedAt = new Date().toISOString();
+
+  let quiet = 0;
+  // A transiently unreadable process table must not erase the last conclusive observation; a later explicit false still replaces an earlier true.
+  let lastKnownPaneProcessAlive: boolean | null = null;
+  let paneProcessEverSeen = false;
+
+  for (;;) {
+    await deps.wait(pollMs);
+
+    if (deps.settled?.() === true) {
+      return { alive: true, signal: "agent reported ready" };
+    }
+
+    const seq = deps.newestEventSeq();
+    if (
+      seq !== null &&
+      (baselineEventSeq === null || BigInt(seq) > BigInt(baselineEventSeq))
+    ) {
+      return { alive: true, signal: "lifecycle event" };
+    }
+
+    if (deps.runtimeEvidence()) {
+      return { alive: true, signal: "pane runtime report" };
+    }
+
+    const activity = await deps.codexActivity().catch(() => null);
+    if (activity !== null && activity > startedAt) {
+      return { alive: true, signal: "tool activity" };
+    }
+
+    const alive = await deps.paneProcessAlive().catch(() => null);
+    if (alive !== null) lastKnownPaneProcessAlive = alive;
+    if (alive === true) paneProcessEverSeen = true;
+
+    quiet += 1;
+    if (quiet >= quietLimit) {
+      // A frontend parked at its composer emits nothing; its process is the proof it is waiting rather than gone.
+      if (lastKnownPaneProcessAlive === true) {
+        return {
+          alive: true,
+          signal: `${deps.launchedCommand} process running in pane`,
+        };
+      }
+      if (lastKnownPaneProcessAlive === null) {
+        // Never a conclusive sample: claiming "no pane ever ran" would report an observation that never happened.
+        return {
+          alive: false,
+          reason: `no sign of life for ${formatRoundedSeconds(
+            quietLimit * pollMs,
+          )} (no event, no runtime report, no tool activity), and the process table was never readable`,
+        };
+      }
+      return {
+        alive: false,
+        reason: paneProcessEverSeen
+          ? `the pane's ${deps.launchedCommand} process disappeared before it ever reported`
+          : `no pane ever ran this launch spec within ${formatRoundedSeconds(
+              quietLimit * pollMs,
+            )} — Ghostty in the Hive Workspace is the only thing that execs it, so the Workspace is closed, not showing this project, or failed to open the pane`,
+      };
+    }
+  }
+}
+
 /** Can this launch report, or is it alive and permanently mute? Proof of life is not proof of reporting: a pane redraws and a process holds the tree whether or not the agent's hive MCP client ever connected — and an agent without that channel cannot publish mail, poll it, or hive_land no matter how healthy it looks. The one truthful signal is the vendor MCP client's own handshake: every supported vendor initializes its MCP servers at session start, and the daemon's /mcp endpoint authenticates each request with the agent's own credential. An authenticated request from the agent's subject therefore proves the whole chain at once — the right port, the right config, a credential that works — measured on the receiving side, never inferred from the agent looking alive. Inherited (user) MCP servers are the opposite tolerance: their failure changes nothing here. */
 /** Vendor MCP initialization competes with every simultaneous launch, so the timeout must allow for a fully loaded machine rather than an idle startup. */
 export const MCP_REPORTING_TIMEOUT_MS = 90_000;

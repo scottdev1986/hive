@@ -448,6 +448,9 @@ test("a spawn over a repo with no standards file uses the generic scaffold", asy
     grokExecutable: "grok",
     kimiExecutable: "kimi",
     opencodeExecutable: "opencode",
+    writeTerminalLaunchSpec: async () => {
+      throw new Error("terminal creation stopped after prompt assembly");
+    },
     sessiond: {
       prepareAgentCreation: async () => ({
         engineBuildId: "engine-test",

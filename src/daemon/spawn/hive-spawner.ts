@@ -122,6 +122,7 @@ import {
   type QuarantineLaunchLayer,
   readinessFailureLayer,
   waitForMcpReporting,
+  watchForPaneProofOfLife,
   watchForProofOfLife,
 } from "./readiness";
 import { SpawnFailedError } from "./spawn-failed-error";
@@ -547,6 +548,28 @@ export class HiveSpawner implements Spawner {
   }
 
   /** Is the binary we launched still running inside that pane? Null means we could not tell — no pane, or a `ps` we could not read — and readiness treats that as no evidence rather than as life. The command is the one hive actually launched, never a provider name inferred from the record: providers may wrap their CLI with launch-time setup, so looking for only the provider executable can reject the command Hive actually launched. */
+  /** Did the pane's authenticated runtime report land on this launch's active run? An adapter child bound or a protocol receipt recorded both mean an agent-ui process holding this agent's credential spoke to this daemon about this run. */
+  private providerRuntimeEvidence(record: AgentRecord): boolean {
+    const run = this.dependencies.db.getActiveProviderRunForAgent(record.id);
+    if (run === null) return false;
+    return run.adapterChild !== null || run.protocolReceipt !== null;
+  }
+
+  /** Is any process carrying this agent's active provider-run id alive? The frontend argv names the run (`--provider-run-id <uuid>`) and that id exists nowhere else, so a whole-table scan is exact without a sessiond root to walk from. */
+  private async paneProcessAlive(record: AgentRecord): Promise<boolean | null> {
+    const run = this.dependencies.db.getActiveProviderRunForAgent(record.id);
+    if (run === null) return null;
+    try {
+      const samples = parseProcessTable(
+        await (this.dependencies.ps ?? runPs)(),
+      );
+      if (samples.length === 0) return null;
+      return samples.some((sample) => sample.command.includes(run.runId));
+    } catch {
+      return null;
+    }
+  }
+
   private async launchedProcessAlive(
     record: AgentRecord,
     command: string,
@@ -1664,18 +1687,30 @@ export class HiveSpawner implements Spawner {
     record: AgentRecord,
     launchedCommand: string,
   ): Promise<string | null> {
-    if (
-      record.sessionLocator !== undefined &&
-      readTerminalLaunchSpec(record.sessionLocator.sessionId) !== null
-    ) {
-      // Ghostty in the Workspace owns the PTY. There is no sessiond process
-      // tree to watch; agent-ui starts when the pane execs this launch spec.
-      return null;
-    }
     const newestEventSeq = () =>
       this.dependencies.newestAgentEventSeq?.(record.id) ?? null;
     // Baseline from the stream, sampled before the watch: anything at or below it was already there, so only a genuinely new lifecycle event counts.
     const baselineEventSeq = newestEventSeq();
+    if (
+      record.sessionLocator !== undefined &&
+      readTerminalLaunchSpec(record.sessionLocator.sessionId) !== null
+    ) {
+      // Ghostty in the Workspace owns the PTY, so there is no sessiond session
+      // to inspect and no pane to capture — but "the spec was written" is not
+      // "anything executed". The pane watch measures what this machine still
+      // can: the agent's own events, the pane's authenticated runtime report,
+      // tool activity, and the frontend process the spec launches.
+      const proof = await watchForPaneProofOfLife(baselineEventSeq, {
+        newestEventSeq,
+        runtimeEvidence: () => this.providerRuntimeEvidence(record),
+        codexActivity: () => this.readCodexActivityFor(record),
+        paneProcessAlive: () => this.paneProcessAlive(record),
+        launchedCommand,
+        wait: (ms) => this.wait(ms),
+        settled: () => !this.isStillSpawning(record.id),
+      });
+      return proof.alive ? null : proof.reason;
+    }
 
     const locator = requireSessiondAgentLocator(record);
     const proof = await watchForProofOfLife(locator, baselineEventSeq, {

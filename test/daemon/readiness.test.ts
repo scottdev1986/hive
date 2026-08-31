@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import {
+  type PaneProofOfLifeDeps,
   type ProofOfLifeDeps,
   QUIET_LIMIT,
   waitForMcpReporting,
+  watchForPaneProofOfLife,
   watchForProofOfLife,
 } from "../../src/daemon/spawn/readiness";
 
@@ -434,5 +436,95 @@ describe("hive MCP reachability (#57)", () => {
     );
     expect(failure).toContain("hive MCP unreachable");
     expect(failure).toContain("maya");
+  });
+});
+
+describe("pane proof of life", () => {
+  function paneDeps(
+    over: Partial<PaneProofOfLifeDeps> = {},
+  ): PaneProofOfLifeDeps {
+    return {
+      newestEventSeq: () => null,
+      runtimeEvidence: () => false,
+      codexActivity: async () => null,
+      paneProcessAlive: async () => null,
+      launchedCommand: "bun",
+      wait: async () => {},
+      ...over,
+    };
+  }
+
+  test("a lifecycle event past the baseline is life", async () => {
+    const proof = await watchForPaneProofOfLife(
+      BASELINE,
+      paneDeps({ newestEventSeq: () => "9" }),
+    );
+    expect(proof).toEqual({ alive: true, signal: "lifecycle event" });
+  });
+
+  test("the pane's authenticated runtime report is life", async () => {
+    const proof = await watchForPaneProofOfLife(
+      BASELINE,
+      paneDeps({ runtimeEvidence: () => true }),
+    );
+    expect(proof).toEqual({ alive: true, signal: "pane runtime report" });
+  });
+
+  test("a quiet frontend at its composer survives on its process alone", async () => {
+    const proof = await watchForPaneProofOfLife(
+      BASELINE,
+      paneDeps({ paneProcessAlive: async () => true }),
+    );
+    expect(proof).toEqual({
+      alive: true,
+      signal: "bun process running in pane",
+    });
+  });
+
+  test("a spec no pane ever ran is DEAD and names the Workspace", async () => {
+    const proof = await watchForPaneProofOfLife(
+      BASELINE,
+      paneDeps({ paneProcessAlive: async () => false }),
+    );
+    expect(proof.alive).toBe(false);
+    if (!proof.alive) {
+      expect(proof.reason).toContain("no pane ever ran this launch spec");
+      expect(proof.reason).toContain("Workspace");
+    }
+  });
+
+  test("a frontend that appeared and then vanished is reported as the death it was", async () => {
+    let polls = 0;
+    const proof = await watchForPaneProofOfLife(
+      BASELINE,
+      paneDeps({ paneProcessAlive: async () => polls++ < 3 && polls < 3 }),
+    );
+    expect(proof.alive).toBe(false);
+    if (!proof.alive) {
+      expect(proof.reason).toContain("disappeared");
+    }
+  });
+
+  test("an unreadable process table is unknown, and unknown is not a verdict about panes", async () => {
+    const proof = await watchForPaneProofOfLife(BASELINE, paneDeps());
+    expect(proof.alive).toBe(false);
+    if (!proof.alive) {
+      expect(proof.reason).toContain("never readable");
+      expect(proof.reason).not.toContain("no pane ever ran");
+    }
+  });
+
+  test("a transient unknown does not erase prior proof of a live process", async () => {
+    let polls = 0;
+    const proof = await watchForPaneProofOfLife(
+      BASELINE,
+      paneDeps({
+        paneProcessAlive: async () => (polls++ === 0 ? true : null),
+      }),
+    );
+    expect(proof).toEqual({
+      alive: true,
+      signal: "bun process running in pane",
+    });
   });
 });

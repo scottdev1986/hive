@@ -2301,11 +2301,18 @@ test("a sessiond-alive terminal keeps its hierarchy binding and is never stopped
     },
     sleep: async () => {},
     mcpClientSeen: () => true,
-    ps: async () =>
-      [
+    // A real frontend argv names its provider run, and the pane readiness watch matches on exactly that id — a lookalike agent-ui row is somebody else's pane.
+    ps: async () => {
+      const runId = db.getActiveProviderRunForAgent(workerAgentId)?.runId;
+      return [
         " 4000     1  1024 /bin/zsh",
-        ` 5000  4000  2048 ${process.execPath} src/cli.ts agent-ui --provider kimi`,
-      ].join("\n"),
+        ...(runId === undefined
+          ? []
+          : [
+              ` 5000  4000  2048 ${process.execPath} src/cli.ts agent-ui --provider kimi --provider-run-id ${runId}`,
+            ]),
+      ].join("\n");
+    },
     issueCredential: () => "hv1.credential-worker.secret",
     claudeExecutable: "claude",
     codexExecutable: "codex",
